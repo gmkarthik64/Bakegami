@@ -1,6 +1,8 @@
 package com.akrolsmir.bakegami;
 
 import android.app.Activity;
+import android.app.PendingIntent;
+import android.app.PendingIntent.CanceledException;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -9,7 +11,9 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.preference.PreferenceManager;
 import android.support.v4.content.LocalBroadcastManager;
+import android.util.Log;
 import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.View.OnLongClickListener;
@@ -17,6 +21,8 @@ import android.view.Window;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 
+import com.akrolsmir.bakegami.WallpaperControlWidgetProvider.FavoriteWallpaperService;
+import com.akrolsmir.bakegami.WallpaperControlWidgetProvider.NextWallpaperService;
 import com.akrolsmir.bakegami.WallpaperControlWidgetProvider.RefreshService;
 import com.squareup.picasso.Picasso;
 
@@ -30,27 +36,57 @@ public class MainActivity extends Activity {
 		setContentView(R.layout.activity_main);
 		
 		findViewById(R.id.favButton).setOnClickListener(new OnClickListener() {
+			
 			@Override
 			public void onClick(View v) {
-				WallpaperManager.with(MainActivity.this).toggleFavorite();
+				Intent intent = new Intent(MainActivity.this, FavoriteWallpaperService.class);
+				PendingIntent pendingIntent = PendingIntent.getService(MainActivity.this, 0, intent, 0);
+				try {
+					pendingIntent.send();
+				} catch (CanceledException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
 			}
 		});
 
 		ImageButton nextButton = (ImageButton) findViewById(R.id.nextButton);
 		nextButton.setOnClickListener(new OnClickListener() {
+
 			@Override
 			public void onClick(View arg0) {
-				WallpaperManager.with(MainActivity.this).nextWallpaper();
+				Intent intent = new Intent(MainActivity.this, NextWallpaperService.class);
+				PendingIntent pendingIntent = PendingIntent.getService(MainActivity.this, 0, intent, 0);
+				try {
+					pendingIntent.send();
+				} catch (CanceledException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+
+//				MainActivity.this.startService(new Intent(MainActivity.this,
+//						WallpaperControlWidgetProvider.RefreshService.class).setAction("start"));
+//
+//				getSharedPreferences("com.akrolsmir.bakegami", 0).edit().putString("subreddit",
+//						subredditText.getText().toString()).commit();
+//
+//				getSharedPreferences("com.akrolsmir.bakegami", 0).edit().putLong("refreshTime",
+//						Long.parseLong(refreshTimeText.getText().toString())).commit();
+//
+//				Toast.makeText(MainActivity.this, "Cycling through r/" + subredditText.getText()
+//						+ " every " + refreshTimeText.getText() + " sec", Toast.LENGTH_LONG).show();
 			}
 		});
 
 		final ImageButton playPauseButton = (ImageButton) findViewById(R.id.pausePlayButton);
+		Log.d("REPEATING", "" + RefreshService.isCycling(this));
 		playPauseButton.setImageResource(
 				RefreshService.isCycling(this) ?
 					android.R.drawable.ic_media_pause :
 					android.R.drawable.ic_media_play
 		);
 		playPauseButton.setOnClickListener(new OnClickListener() {
+
 			@Override
 			public void onClick(View v) {
 				playPauseButton.setImageResource(
@@ -58,7 +94,8 @@ public class MainActivity extends Activity {
 							android.R.drawable.ic_media_play :
 							android.R.drawable.ic_media_pause
 				);
-				Intent intent = new Intent(MainActivity.this, RefreshService.class);
+				Intent intent = new Intent(MainActivity.this,
+						WallpaperControlWidgetProvider.RefreshService.class);
 				startService(intent.setAction(RefreshService.TOGGLE));
 			}
 		});
@@ -67,10 +104,17 @@ public class MainActivity extends Activity {
 		playPauseButton.setOnLongClickListener(new OnLongClickListener() {
 			@Override
 			public boolean onLongClick(View arg0) {
-				WallpaperManager.with(MainActivity.this).resetQueueAndHistory();
+				// clears cache
+//				for(File file : getExternalCacheDir().listFiles())
+//					file.delete();
+//				
+//				Toast.makeText(MainActivity.this, "Cleared cache", Toast.LENGTH_SHORT).show();
+				
+				WallpaperManager.with(MainActivity.this).clearHistory();
 				return false;
 			}
 		});
+		
 		
 		findViewById(R.id.currentBG).setOnClickListener(new OnClickListener() {
 			@Override
@@ -78,8 +122,8 @@ public class MainActivity extends Activity {
 				Intent intent = new Intent();
 				intent.setAction(Intent.ACTION_VIEW);
 				intent.setDataAndType(
-						Uri.fromFile(WallpaperManager.with(MainActivity.this)
-								.getCurrentWallpaper().getCacheFile()), "image/*");
+						Uri.fromFile(WallpaperManager.with(MainActivity.this).getCurrentWallpaper().getCacheFile()),
+						"image/*");
 				startActivity(intent);
 			}
 		});
@@ -89,8 +133,16 @@ public class MainActivity extends Activity {
 	public boolean onCreateOptionsMenu(Menu menu) {
 		// Inflate the menu; this adds items to the action bar if it is present.
 		getMenuInflater().inflate(R.menu.main, menu);
-		menu.findItem(R.id.action_settings).setIntent(new Intent(this, SettingsActivity.class));
 		return true;
+	}
+	
+	@Override
+	public boolean onOptionsItemSelected(MenuItem item) {
+		switch(item.getItemId()) {
+		case R.id.action_settings:
+			startActivity(new Intent(this, SettingsActivity.class));
+		}
+		return super.onOptionsItemSelected(item);
 	}
 	
 	/* Listen for changes made by services/the widget */
@@ -127,6 +179,7 @@ public class MainActivity extends Activity {
 	};
 	
 	private void onNextBG() {
+		Log.d("TAG", "onNextBG");
 		ImageView currentBG = (ImageView) findViewById(R.id.currentBG);
 		Picasso.with(this).load(
 				WallpaperManager.with(this).getCurrentWallpaper().getCacheFile())

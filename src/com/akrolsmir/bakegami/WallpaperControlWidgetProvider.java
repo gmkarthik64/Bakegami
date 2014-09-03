@@ -10,6 +10,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.os.SystemClock;
+import android.support.v4.content.LocalBroadcastManager;
 import android.util.Log;
 import android.widget.RemoteViews;
 
@@ -64,7 +65,10 @@ public class WallpaperControlWidgetProvider extends AppWidgetProvider {
 
 		@Override
 		protected void onHandleIntent(Intent intent) {
-			WallpaperManager.with(this).toggleFavorite();
+			WallpaperManager.with(this).getCurrentWallpaper().toggleFavorite();
+			// Notify MainActivity and the widget to update their views
+			LocalBroadcastManager.getInstance(this).sendBroadcast(new Intent(MainActivity.FAVORITE));
+			WallpaperControlWidgetProvider.updateViews(this);
 		}
 	}
 
@@ -78,6 +82,9 @@ public class WallpaperControlWidgetProvider extends AppWidgetProvider {
 		protected void onHandleIntent(Intent intent) {
 			Log.d("Changing wallpaper", "...");
 			WallpaperManager.with(this).nextWallpaper();
+			// Notify MainActivity and the widget to update their views
+			LocalBroadcastManager.getInstance(this).sendBroadcast(new Intent(MainActivity.NEXT));
+			WallpaperControlWidgetProvider.updateViews(this);
 		}
 	}
 
@@ -98,7 +105,7 @@ public class WallpaperControlWidgetProvider extends AppWidgetProvider {
 		}
 		
 		public final static String TOGGLE = "com.akrolsmir.bakegami.TOGGLE",
-				BOOT = "com.akrolsmir.bakegami.BOOT", UPDATE = "com.akrolsmir.bakegami.UPDATE";
+				BOOT = "com.akrolsmir.bakegami.BOOT";
 
 		@Override
 		protected void onHandleIntent(Intent intent) {
@@ -111,23 +118,21 @@ public class WallpaperControlWidgetProvider extends AppWidgetProvider {
 			long period = SettingsActivity.getRefreshSeconds(this) * 1000;
 			alarmManager.cancel(pendingIntent); //Cancels any past refresh
 			
+			
+			Log.d("REPEATING intent.getAction()", intent.getAction());
 			if (intent.getAction().equals(BOOT)) {
-				if (isCycling(this)) {
-					alarmManager.setRepeating(AlarmManager.ELAPSED_REALTIME,
-							SystemClock.elapsedRealtime() + period / 2, period, pendingIntent);
-				}
+				alarmManager.setRepeating(AlarmManager.ELAPSED_REALTIME,
+						SystemClock.elapsedRealtime() + period / 2, period, pendingIntent);
+				setCycling(true);
 			} else if (intent.getAction().equals(TOGGLE)) {
-				if (isCycling(this)) {
+				if(isCycling(this)) {
 					// stop by doing nothing
+					Log.d("REPEATING EVERY", "PAUSED");
 				} else {
 					alarmManager.setRepeating(AlarmManager.ELAPSED_REALTIME, 0, period, pendingIntent);
+					Log.d("REPEATING EVERY", period + "ms");
 				}
 				setCycling(!isCycling(this));
-			} else if (intent.getAction().equals(UPDATE)) {
-				if(isCycling(this)) {
-					alarmManager.setRepeating(AlarmManager.ELAPSED_REALTIME, 
-							SystemClock.elapsedRealtime() + period, period, pendingIntent);
-				}
 			}
 
 		}
@@ -136,7 +141,8 @@ public class WallpaperControlWidgetProvider extends AppWidgetProvider {
 	// Restart alarm on boot
 	public static class BootBroadcastReceiver extends BroadcastReceiver {
 		
-		public BootBroadcastReceiver() {}
+		public BootBroadcastReceiver() {
+		}
 
 		@Override
 		public void onReceive(Context context, Intent intent) {

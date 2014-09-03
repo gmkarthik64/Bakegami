@@ -1,15 +1,11 @@
 package com.akrolsmir.bakegami;
 
-import java.io.File;
-
 import org.springframework.http.converter.StringHttpMessageConverter;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
 
 import android.content.Context;
-import android.content.Intent;
 import android.content.SharedPreferences;
-import android.support.v4.content.LocalBroadcastManager;
 import android.util.Log;
 
 import com.google.gson.JsonArray;
@@ -21,8 +17,6 @@ public class WallpaperManager {
 	private SharedPreferences settings;
 	private Context context;
 	private static WallpaperManager instance;
-	private boolean setNextWallpaperAsBG = false;
-
 	private WallpaperManager(Context context) {
 		this.settings = context.getSharedPreferences("com.akrolsmir.bakegami.WallpaperManager", 0);
 		this.context = context;
@@ -32,46 +26,18 @@ public class WallpaperManager {
 	public static WallpaperManager with(Context context) {
 		return instance == null ? instance = new WallpaperManager(context) : instance; 
 	}
-	
-	public void setWallpaper(File file) {
-		getCurrentWallpaper().uncache();
-		String history = settings.getString(HISTORY, "");
-		settings.edit().putString(HISTORY, file.toURI() + " " + history).apply();
-		
-		getCurrentWallpaper().setAsBackground();
-		// Notify MainActivity and the widget to update their views
-		LocalBroadcastManager.getInstance(context).sendBroadcast(new Intent(MainActivity.NEXT));
-		WallpaperControlWidgetProvider.updateViews(context);
-	}
 
 	public void nextWallpaper() {
-		getCurrentWallpaper().uncache();
 		advanceCurrent();
 		getCurrentWallpaper().setAsBackground();
-		// Notify MainActivity and the widget to update their views
-		LocalBroadcastManager.getInstance(context).sendBroadcast(new Intent(MainActivity.NEXT));
-		WallpaperControlWidgetProvider.updateViews(context);
-	}
-	
-	public void toggleFavorite() {
-		getCurrentWallpaper().toggleFavorite();
-		// Notify MainActivity and the widget to update their views
-		LocalBroadcastManager.getInstance(context).sendBroadcast(new Intent(MainActivity.FAVORITE));
-		WallpaperControlWidgetProvider.updateViews(context);
 	}
 	
 	public Wallpaper getCurrentWallpaper() {
 		return new Wallpaper(context, getCurrentWallpaperURL());
 	}
 	
-	public void resetQueueAndHistory() {
-		settings.edit().clear().apply();
-		fetchNextUrls();
-	}
-	
-	public void resetQueue() {
-		settings.edit().putString(QUEUE, "").apply();
-		setNextWallpaperAsBG = true;
+	public void clearHistory() {
+		settings.edit().clear().commit();
 		fetchNextUrls();
 	}
 	
@@ -93,34 +59,51 @@ public class WallpaperManager {
 			public void run() {
 				RestTemplate restTemplate = new RestTemplate();
 				restTemplate.getMessageConverters().add(new StringHttpMessageConverter());
-				String rawJson = restTemplate.getForObject("http://www.reddit.com/r/"
-						+ getSubreddit() + "/top.json?t=week", String.class);
-				parseUrlFromReddit(rawJson, numToFetch);
+				String rawJson = "";
+				for(int i = 0; i < numToFetch; i++)
+				{
+					int sr = (int)(10*Math.random());
+					if(getSubreddit(sr).length() == 0)
+						i--;
+					else
+					{
+						rawJson = restTemplate.getForObject("http://www.reddit.com/r/"
+								+ getSubreddit(sr) + "/top.json?t=week", 
+								String.class);
+					
+						if(!parseUrlFromReddit(rawJson))
+							i--;
+					}
+				}
 			}
 		}).start();
 	}
 
-	private String getSubreddit() {
-		return SettingsActivity.getSubreddit(context);
+	private String getSubreddit(int index) {
+		return SettingsActivity.getSubreddit(context,index);
 	}
 
-	private void parseUrlFromReddit(String rawJson, int numToFetch) {
+	private boolean parseUrlFromReddit(String rawJson) {
 		JsonElement object = new JsonParser().parse(rawJson);
 		JsonArray children = object.getAsJsonObject().get("data").getAsJsonObject().get("children").getAsJsonArray();
 		for (JsonElement child : children) {
 			String url = child.getAsJsonObject().get("data").getAsJsonObject().get("url").getAsString();
-			if (numToFetch > 0 && validImageUrl(url)) {
+			boolean nsfw = child.getAsJsonObject().get("data").getAsJsonObject().get("over_18").getAsBoolean();
+			if(url.contains("imgur.com") && !url.contains("imgur.com/a/") && !url.contains("i.imgur.com"))
+				url+=".jpg";
+			if (validImageUrl(url) && !nsfw) {
 				enqueueURL(url);
-				numToFetch--;
+				return true;
 			}
 		}
+		return false;
 		// TODO handle case when out of images
 		//		return "http://i.imgur.com/iCQxSJZ.jpg";
 	}
 
 	// Returns true if URL has no spaces, ends in .jpg/.png and is not enqueued
 	private boolean validImageUrl(String imageURL) {
-		return !imageURL.contains(" ") && imageURL.matches("http://.*\\.(jpg|png)$")
+		return !imageURL.contains(" ") && imageURL.matches("https?://.*\\.(jpg|png)$")
 				&& isNew(imageURL);
 	}
 	
@@ -129,32 +112,27 @@ public class WallpaperManager {
 		return !((settings.getString(HISTORY, "") + settings.getString(QUEUE, "")).contains(imageURL));
 	}
 
+
 	private void enqueueURL(String imageURL) {
 		Log.d("enqueueURL", imageURL);
+		new Wallpaper(context, imageURL).cache();
 		String queue = settings.getString(QUEUE, "");
-		settings.edit().putString(QUEUE, queue + imageURL + " ").apply();
-		
-		if (setNextWallpaperAsBG) { // || settings.getString(QUEUE, "").length == 0
-			nextWallpaper();
-			setNextWallpaperAsBG = false;
-		} else {
-			new Wallpaper(context, imageURL).cache();
-		}
+		settings.edit().putString(QUEUE, queue + imageURL + " ").commit();
 	}
 	
-	// The current wallpaper is at the top of the history stack
 	private String DEFAULT_URL = "http://cdn.awwni.me/maav.jpg";
 	private String getCurrentWallpaperURL(){
-		String url = settings.getString(HISTORY, DEFAULT_URL + " ").split(" ")[0];
+		String url = settings.getString(QUEUE, DEFAULT_URL + " ").split(" ")[0];
+		Log.d("URLURLURL", "url: " + url);
 		return url.contains("/") ? url : DEFAULT_URL;
 	}
 
-	// Push the head of the queue onto history, which marks it as current
 	private void advanceCurrent() {
-		String queue = settings.getString(QUEUE, "");
-		settings.edit().putString(QUEUE, queue.substring(queue.indexOf(" ") + 1)).apply();
+		// move current from queue to history
 		String history = settings.getString(HISTORY, "");
-		settings.edit().putString(HISTORY, queue.split(" ")[0] + " " + history).apply();
+		settings.edit().putString(HISTORY, history + getCurrentWallpaperURL() + " ").commit();
+		String queue = settings.getString(QUEUE, "");
+		settings.edit().putString(QUEUE, queue.substring(queue.indexOf(" ") + 1)).commit();
 		Log.d("HISTORY", settings.getString(HISTORY, ""));
 		Log.d("QUEUE", settings.getString(QUEUE, ""));
 		
